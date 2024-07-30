@@ -9,23 +9,23 @@ from flask import Flask, flash, redirect, render_template, request, session
 from flask_session import Session
 # from tempfile import mkdtemp
 from werkzeug.security import check_password_hash, generate_password_hash
+import yfinance as yf
 
 
-# Configure application
 app = Flask(__name__)
 
-# Custom filter
+
 app.jinja_env.filters["usd"] = helpers.usd
 
-# Configure session to use filesystem (instead of signed cookies)
+
 app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
-# Configure CS50 Library to use SQLite database
+
 db = SQL("sqlite:///finance.db")
 
-# Make sure API key is set
+
 if not os.environ.get("API_KEY"):
     raise RuntimeError("API_KEY not set")
 
@@ -59,7 +59,7 @@ def after_request(response):
 @helpers.login_required
 def index():
     """ Show portfolio of stocks"""
-    current_user_id = session["user_id"]
+    current_user_id = session["user_id"]	
     user_stocks = db.execute(
         """SELECT share_symbol, share_name, SUM(total_shares) AS total_shares,
            share_price FROM user_transactions WHERE user_id = ? GROUP BY
@@ -84,42 +84,43 @@ def index():
 def buy():
     """Buy shares of stock"""
     if request.method == "POST":
-        quote = helpers.check_symbol(request.form.get("symbol"))
+        symbol = request.form.get("symbol")
+        quote = helpers.check_symbol(symbol)
         if quote == 1:
             return helpers.apology("Please introduce a symbol", 400)
         elif quote == 2:
             return helpers.apology("Symbol not valid", 400)
 
-        shares = request.form.get("shares")
+        shares_str = request.form.get("shares")
+        #if not shares_str:
+	#    return helpers.apology("Shares field is required", 400)
 
         try:
-            shares = int(shares)
+            shares = int(shares_str)
         except ValueError:
-            return helpers.apology("Only numbers", 400)
+            return helpers.apology("Only numbers are allowed for shares", 400)
 
         if shares < 1:
             return helpers.apology("Must select shares higher than 0", 400)
 
         current_user_id = session["user_id"]
         current_user_cash = get_user_cash(current_user_id)
-        # round to 2 decimals a float#
-        total_shares_value = (quote['price'] * shares)
-        # START TRANSACTION#
+        total_shares_value = quote['price'] * shares
+
         if current_user_cash >= total_shares_value:
-            # purchase_timestamp = datetime.datetime.now() #no need
             db.execute(
-                """INSERT INTO user_transactions(user_id ,share_name,
+                """INSERT INTO user_transactions(user_id, share_name,
                    share_price, share_symbol, total_shares,
                    transaction_type) VALUES (?, ?, ?, ?, ?, ?)""",
                 current_user_id, quote['name'], quote['price'],
-                quote['symbol'], shares, "BUY")
+                quote['symbol'], shares, "BUY"
+            )
 
             current_user_cash -= total_shares_value
             db.execute("UPDATE users SET cash = ? WHERE id = ?",
                        current_user_cash, current_user_id)
         else:
-            return helpers.apology("""cannot afford the number of
-                            shares at the current price.""", 400)
+            return helpers.apology("Cannot afford the number of shares at the current price.", 400)
 
         flash(f"You bought {shares} share/s of {quote['name']}!")
         return redirect("/")
@@ -155,28 +156,28 @@ def login():
         if not request.form.get("username"):
             return helpers.apology("must provide username", 403)
 
-        # Ensure password was submitted
+
         elif not request.form.get("password"):
             return helpers.apology("must provide password", 403)
 
-        # Query database for username
+
         rows = db.execute(
             "SELECT * FROM users WHERE username = ?", request.form.get(
                 "username")
         )
 
-        # Ensure username exists and password is correct
+
         if len(rows) != 1 or not check_password_hash(
             rows[0]["hash"], request.form.get("password")
         ):
             return helpers.apology("invalid username and/or password", 403)
 
-        # Remember which user has logged in
+
         session["user_id"] = rows[0]["id"]
 
-        # Redirect user to home page
+
         return redirect("/")
-    # User reached route via GET (as by clicking a link or via redirect)
+
     else:
         return render_template("login.html")
 
@@ -195,21 +196,25 @@ def logout():
 def quote():
     """Get stock quote."""
     if request.method == "POST":
-        # print("POSTED")
-        quote = helpers.check_symbol(request.form.get("symbol"))
+        symbol = request.form.get("symbol")
+        if not symbol:
+            return helpers.apology("Please introduce a symbol", 400)
 
+        # Check symbol validity
+        quote = helpers.check_symbol(symbol)
         if quote == 1:
             return helpers.apology("Please introduce a symbol", 400)
         elif quote == 2:
             return helpers.apology("Symbol not valid", 400)
 
-        quote.update(
-            {
-                "name": quote["name"],
-                "price": helpers.usd(quote["price"]),
-                "symbol": quote["symbol"],
-            }
-        )
+        # Fetch stock data
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        quote.update({
+            "name": info.get('shortName', 'Name not found'),
+            "price": helpers.usd(quote["price"]),
+            "symbol": quote["symbol"],
+        })
 
         return render_template("quoted.html", quote=quote)
     else:
@@ -240,8 +245,6 @@ def register():
             generate_password_hash(password),
         )
 
-        # THIS ENABLES AFTER REGISTERING TO BE REDIRECT TO #
-        # HOMEPAGE AND SEE CURRENT USER BALANCE
         rows = db.execute(
             "SELECT * FROM users WHERE username = ?", username)
 
