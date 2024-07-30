@@ -1,5 +1,4 @@
 import os
-
 import requests
 import urllib.parse
 
@@ -8,14 +7,7 @@ from functools import wraps
 
 
 def apology(message, code=400):
-    """Render message as an apology to user."""
-
     def escape(s):
-        """
-        Escape special characters.
-
-        https://github.com/jacebrowning/memegen#special-characters
-        """
         for old, new in [
             ("-", "--"),
             (" ", "-"),
@@ -34,12 +26,6 @@ def apology(message, code=400):
 
 
 def login_required(f):
-    """
-    Decorate routes to require login.
-
-    https://flask.palletsprojects.com/en/1.1.x/patterns/viewdecorators/
-    """
-
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if session.get("user_id") is None:
@@ -50,27 +36,35 @@ def login_required(f):
 
 
 def lookup(symbol):
-    """Look up quote for symbol."""
-
-    # Contact API
     try:
         api_key = os.environ.get("API_KEY")
-        url = f"https://cloud.iexapis.com/stable/stock/{urllib.parse.quote_plus(symbol)}/quote?token={api_key}"
+        if not api_key:
+            raise ValueError("API_KEY environment variable not set")
+
+        url = f'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={api_key}'
         response = requests.get(url)
         response.raise_for_status()
-    except requests.RequestException:
+    except requests.RequestException as e:
+        print(f"Request error: {e}")
+        return None
+    except ValueError as e:
+        print(f"Value error: {e}")
         return None
 
-    # Parse response
     try:
         quote = response.json()
+        print("API Response:", quote)  
+        global_quote = quote.get("Global Quote", {})
         return {
-            "name": quote["companyName"],
-            "price": float(quote["latestPrice"]),
-            "symbol": quote["symbol"],
+            "symbol": global_quote.get("01. symbol", ""),
+            "price": float(global_quote.get("05. price", 0)),
+            "volume": int(global_quote.get("06. volume", 0))
+
         }
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as e:
+        print(f"Parsing error: {e}")
         return None
+
 
 
 def usd(value):
@@ -80,10 +74,11 @@ def usd(value):
 
 def check_symbol(symbol):
     if not symbol:
-        return 1  # apology
+        return 1  
 
     quote = lookup(symbol)
     if not quote:
-        return 2  # apology
+        return 2  
 
     return quote
+
